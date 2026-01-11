@@ -1,8 +1,10 @@
 from fastapi import FastAPI
-from vercel_kv import kv
+from vercel_kv import VercelKV
 import json
+import os
 
 app = FastAPI()
+kv = VercelKV()
 
 @app.get("/api/data")
 def get_data():
