@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from upstash_redis import Redis
 import json
+import os
 
 app = FastAPI()
 redis = Redis.from_env()
