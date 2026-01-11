@@ -1,4 +1,3 @@
 fastapi
 uvicorn
-vercel-kv
-requests
+upstash-redis
