@@ -3,7 +3,7 @@
     {
       "src": "api/main.py",
       "use": "@vercel/python",
-      "config": { "installCommand": "pip install -r requirements.txt" }
+      "config": { "installCommand": "pip install -r requirements.txt && playwright install chromium" }
     }
   ],
   "crons": [
