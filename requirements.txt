@@ -1,3 +1,5 @@
 fastapi
 uvicorn
 upstash-redis
+playwright
+beautifulsoup4
