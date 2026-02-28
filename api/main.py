@@ -373,68 +373,84 @@ def extract_currency_data(html):
     Extrae datos de monedas eliminando duplicados.
     """
     soup = BeautifulSoup(html, 'html.parser')
-    
-    # Encontrar TODAS las filas de tabla en cualquier parte del HTML
-    all_rows = soup.find_all('tr')
-    # logger.info(f"Total de filas encontradas en el HTML: {len(all_rows)}") # Reducir logs en cron
-    
-    # Filtrar solo filas que contienen datos de moneda
-    currency_rows = []
-    for row in all_rows:
-        if row.find('span', class_='currency') and row.find('span', class_='price-text'):
-            currency_rows.append(row)
-    
-    # Diccionario para evitar duplicados (usamos moneda como clave)
+
+    # Acotar al componente water-mark de eltoque para evitar falsos positivos
+    watermark_elem = soup.find('water-mark', attrs={'text': 'eltoque.com'})
+    if not watermark_elem:
+        logger.warning("No se encontró el elemento <water-mark text='eltoque.com'>")
+        return {
+            "origen": "eltoque.com",
+            "fecha_actualizacion": None,
+            "pais": "CUBA",
+            "monedas": [],
+            "estadisticas": {"total_monedas_unicas": 0, "total_filas_encontradas": 0}
+        }
+
+    # Buscar solo dentro del water-mark (excluye el shadow root, que BS4 ignora igual)
+    all_rows = watermark_elem.find_all('tr')
+    logger.info(f"Total de filas encontradas en el HTML: {len(all_rows)}")
+
+    currency_rows = [
+        row for row in all_rows
+        if row.find('span', id=lambda x: x and x.startswith('cell-title-v2-'))
+    ]
+
     currency_dict = {}
     currency_data = []
-    
+
     for row in currency_rows:
-        currency_elem = row.select_one('.currency')
-        price_elem = row.select_one('.price-text')
-        
-        if currency_elem and price_elem:
-            currency_text = currency_elem.get_text()
-            parts = currency_text.split(' ', 1)
-            cantidad = parts[0] if len(parts) > 0 else "1"
-            moneda = parts[1] if len(parts) > 1 else currency_text
-            
-            # Clave única: moneda + precio (por si hay diferentes precios para la misma moneda)
-            precio_text = price_elem.get_text(strip=True).replace('CUP', '').strip()
-            clave = f"{moneda}_{precio_text}"
-            
-            # Solo añadir si no hemos visto esta combinación antes
-            if clave not in currency_dict:
-                currency_dict[clave] = True
-                
-                # Determinar tendencia
-                tendencia = "neutral"
-                price_classes = price_elem.get('class', [])
-                if 'change-plus' in price_classes:
-                    tendencia = "sube"
-                elif 'change-minus' in price_classes:
-                    tendencia = "baja"
-                
-                # Obtener cambio si existe
-                change_elem = row.select_one('.dif-number sup')
-                cambio_valor = change_elem.get_text(strip=True) if change_elem else None
-                
-                currency_data.append({
-                    "moneda": moneda,
-                    "cantidad": cantidad,
-                    "precio_cup": float(precio_text) if '.' in precio_text else int(precio_text),
-                    "tendencia": tendencia,
-                    "cambio": cambio_valor
-                })
-    
-    # Extraer fecha y hora
-    fecha_elem = soup.select_one('.date')
+        currency_elem = row.find('span', id=lambda x: x and x.startswith('cell-title-v2-'))
+        price_elem = row.select_one('span.font-extrabold.text-lg.leading-tight')
+
+        if not currency_elem or not price_elem:
+            continue
+
+        currency_text = currency_elem.get_text(strip=True)
+        parts = currency_text.split(' ', 1)
+        cantidad = parts[0] if len(parts) > 0 else "1"
+        moneda = parts[1] if len(parts) > 1 else currency_text
+
+        precio_text = price_elem.get_text(strip=True).replace('CUP', '').strip()
+
+        clave = f"{moneda}_{precio_text}"
+        if clave in currency_dict:
+            continue
+        currency_dict[clave] = True
+
+        price_classes = price_elem.get('class', [])
+        if 'text-red-600' in price_classes:
+            tendencia = "sube"
+        elif 'text-emerald-600' in price_classes:
+            tendencia = "baja"
+        else:
+            tendencia = "neutral"
+
+        change_elem = row.select_one('span.inline-flex span:last-child')
+        cambio_valor = change_elem.get_text(strip=True) if change_elem else None
+
+        try:
+            precio_cup = float(precio_text) if '.' in precio_text else int(precio_text)
+        except ValueError:
+            logger.warning(f"No se pudo convertir precio: {precio_text}")
+            continue
+
+        currency_data.append({
+            "moneda": moneda,
+            "cantidad": cantidad,
+            "precio_cup": precio_cup,
+            "tendencia": tendencia,
+            "cambio": cambio_valor
+        })
+
+    # Fecha/hora se buscan en el documento completo (suelen estar fuera del water-mark)
+    time_elem = watermark_elem.find('time') or soup.find('time')
     hora_elem = soup.select_one('.time')
     pais_elem = soup.select_one('.country')
-    
+
     fecha_actualizacion = None
-    if fecha_elem and hora_elem:
-        fecha_actualizacion = f"{fecha_elem.get_text(strip=True)} {hora_elem.get_text(strip=True)}"
-    
+    if time_elem:
+        fecha_actualizacion = time_elem.get('datetime') or time_elem.get_text(strip=True)
+
     return {
         "origen": "eltoque.com",
         "fecha_actualizacion": fecha_actualizacion,
