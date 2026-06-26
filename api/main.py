@@ -375,9 +375,16 @@ def extract_currency_data(html):
     soup = BeautifulSoup(html, 'html.parser')
 
     # Acotar al componente water-mark de eltoque para evitar falsos positivos
-    watermark_elem = soup.find('water-mark', attrs={'text': 'eltoque.com'})
+    # Buscar todos los elementos water-mark y encontrar el que contiene filas de la tabla (evitando el watermark del layout principal)
+    watermark_elems = soup.find_all('water-mark', attrs={'text': 'eltoque.com'})
+    watermark_elem = None
+    for wm in watermark_elems:
+        if wm.find('tr'):
+            watermark_elem = wm
+            break
+
     if not watermark_elem:
-        logger.warning("No se encontró el elemento <water-mark text='eltoque.com'>")
+        logger.warning("No se encontró ningún elemento <water-mark text='eltoque.com'> que contenga filas (tr)")
         return {
             "origen": "eltoque.com",
             "fecha_actualizacion": None,
@@ -385,6 +392,7 @@ def extract_currency_data(html):
             "monedas": [],
             "estadisticas": {"total_monedas_unicas": 0, "total_filas_encontradas": 0}
         }
+
 
     # Buscar solo dentro del water-mark (excluye el shadow root, que BS4 ignora igual)
     all_rows = watermark_elem.find_all('tr')
