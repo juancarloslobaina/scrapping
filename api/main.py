@@ -406,7 +406,7 @@ def extract_currency_data(html):
             continue
 
         currency_text = currency_elem.get_text(strip=True)
-        parts = currency_text.split(' ', 1)
+        parts = currency_text.split(None, 1)
         cantidad = parts[0] if len(parts) > 0 else "1"
         moneda = parts[1] if len(parts) > 1 else currency_text
 
