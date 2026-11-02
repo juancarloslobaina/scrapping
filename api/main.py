@@ -374,9 +374,9 @@ def extract_currency_data(html):
     """
     soup = BeautifulSoup(html, 'html.parser')
 
-    # Acotar al componente water-mark de eltoque para evitar falsos positivos
-    # Buscar todos los elementos water-mark y encontrar el que contiene filas de la tabla (evitando el watermark del layout principal)
-    watermark_elems = soup.find_all('water-mark', attrs={'text': 'eltoque.com'})
+    # Acotar al contenedor watermark de la tabla de tasas para evitar falsos positivos
+    # La página repite la tabla (escritorio y móvil); tomamos el primer watermark que contiene filas
+    watermark_elems = soup.select('div.watermark')
     watermark_elem = None
     for wm in watermark_elems:
         if wm.find('tr'):
@@ -384,7 +384,7 @@ def extract_currency_data(html):
             break
 
     if not watermark_elem:
-        logger.warning("No se encontró ningún elemento <water-mark text='eltoque.com'> que contenga filas (tr)")
+        logger.warning("No se encontró ningún elemento <div class='watermark'> que contenga filas (tr)")
         return {
             "origen": "eltoque.com",
             "fecha_actualizacion": None,
@@ -394,20 +394,22 @@ def extract_currency_data(html):
         }
 
 
-    # Buscar solo dentro del water-mark (excluye el shadow root, que BS4 ignora igual)
+    # Buscar solo dentro del watermark
     all_rows = watermark_elem.find_all('tr')
     logger.info(f"Total de filas encontradas en el HTML: {len(all_rows)}")
 
+    # La moneda ("1 USD") va en el span del tooltip; el otro span es la descripción ("Dólar Estadounidense")
+    currency_selector = '.tooltip-host > span:not([role="tooltip"])'
     currency_rows = [
         row for row in all_rows
-        if row.find('span', id=lambda x: x and x.startswith('cell-title-v2-'))
+        if row.select_one(currency_selector)
     ]
 
     currency_dict = {}
     currency_data = []
 
     for row in currency_rows:
-        currency_elem = row.find('span', id=lambda x: x and x.startswith('cell-title-v2-'))
+        currency_elem = row.select_one(currency_selector)
         price_elem = row.select_one('span.font-extrabold.text-lg.leading-tight')
 
         if not currency_elem or not price_elem:
@@ -433,7 +435,8 @@ def extract_currency_data(html):
         else:
             tendencia = "neutral"
 
-        change_elem = row.select_one('span.inline-flex span:last-child')
+        # Acotado al contenedor del precio: el tooltip de la moneda también es un span.inline-flex
+        change_elem = price_elem.parent.select_one('span.inline-flex span:last-child')
         cambio_valor = change_elem.get_text(strip=True) if change_elem else None
 
         try:
@@ -450,8 +453,8 @@ def extract_currency_data(html):
             "cambio": cambio_valor
         })
 
-    # Fecha/hora se buscan en el documento completo (suelen estar fuera del water-mark)
-    time_elem = watermark_elem.find('time') or soup.find('time')
+    # La fecha está en el pie de la tarjeta de tasas, fuera del watermark pero en su mismo contenedor
+    time_elem = watermark_elem.parent.find('time') or soup.find('time')
     hora_elem = soup.select_one('.time')
     pais_elem = soup.select_one('.country')
 
