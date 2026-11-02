@@ -343,7 +343,10 @@ def intelligent_turnstile_bypass(url):
         try:
             # Navegar
             response = page.goto(url, wait_until='networkidle', timeout=60000)
-            
+            # Un 403 con cf-mitigated=challenge indica que Cloudflare mostró el challenge
+            if response:
+                logger.info(f"Respuesta inicial: HTTP {response.status}, cf-mitigated={response.headers.get('cf-mitigated')}")
+
             # Estrategia 1: Esperar y ver si se resuelve automáticamente
             logger.info("Esperando posible resolución automática...")
             page.wait_for_timeout(8000)
@@ -367,6 +370,25 @@ def intelligent_turnstile_bypass(url):
 def multi_strategy_bypass(url):
     """Probamos múltiples estrategias"""
     return intelligent_turnstile_bypass(url)
+
+def describe_page(html):
+    """
+    Resume la página recibida para diagnosticar por qué no se extrajeron monedas.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    titulo = soup.title.get_text(strip=True) if soup.title else None
+
+    # Marcas que solo aparecen en la página de challenge de Cloudflare ("Just a moment...")
+    challenge_cloudflare = '_cf_chl_opt' in html or (titulo or '').lower().startswith('just a moment')
+
+    return {
+        "titulo": titulo,
+        "tamano_html": len(html),
+        "challenge_cloudflare": challenge_cloudflare,
+        "watermarks": len(soup.select('div.watermark')),
+        "tablas": len(soup.find_all('table')),
+        "texto_inicio": soup.body.get_text(" ", strip=True)[:300] if soup.body else None
+    }
 
 def extract_currency_data(html):
     """
@@ -511,14 +533,27 @@ def job_execution():
             
             # 3. Guardar en Upstash Redis (Reemplaza save_to_json local)
             redis.set("cron_data", json.dumps(data))
-            
+
             logger.info(f"Cron ejecutado exitosamente. {len(data.get('monedas', []))} monedas procesadas.")
-            return {
-                "message": "Cron executed successfully", 
+            result = {
+                "message": "Cron executed successfully",
                 "status": "success",
                 "updated_at": data.get("fecha_actualizacion"),
                 "count": len(data.get("monedas", []))
             }
+
+            # Sin monedas: reportar qué página llegó y guardar el HTML 24h para revisarlo
+            if not data.get("monedas"):
+                diagnostico = describe_page(content)
+                logger.warning(f"No se extrajeron monedas. Diagnóstico: {json.dumps(diagnostico, ensure_ascii=False)}")
+                try:
+                    redis.set("cron_debug_html", content, ex=86400)
+                    diagnostico["html_guardado_en"] = "cron_debug_html"
+                except Exception as e:
+                    logger.warning(f"No se pudo guardar el HTML de diagnóstico: {e}")
+                result["diagnostico"] = diagnostico
+
+            return result
         else:
             logger.error("No se pudo obtener contenido del scraper.")
             return {"message": "Scraping failed", "status": "error", "error": "No content received from scraper"}
