@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from upstash_redis import Redis
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from bs4 import BeautifulSoup
 import json
 import time
@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 # Inicializar FastAPI y Redis
 app = FastAPI()
 redis = Redis.from_env()
+
+# Tiempo máximo para que Cloudflare resuelva el challenge y aparezca la tabla de tasas
+CHALLENGE_TIMEOUT_MS = 180000
 
 # --- Lógica del Scraper (Turnstile Bypass y Extracción) ---
 
@@ -341,16 +344,23 @@ def intelligent_turnstile_bypass(url):
         })
         
         try:
-            # Navegar
-            response = page.goto(url, wait_until='networkidle', timeout=60000)
+            # Navegar (la espera real es por la tabla de tasas, más abajo)
+            response = page.goto(url, wait_until='domcontentloaded', timeout=60000)
             # Un 403 con cf-mitigated=challenge indica que Cloudflare mostró el challenge
             if response:
                 logger.info(f"Respuesta inicial: HTTP {response.status}, cf-mitigated={response.headers.get('cf-mitigated')}")
 
-            # Estrategia 1: Esperar y ver si se resuelve automáticamente
-            logger.info("Esperando posible resolución automática...")
-            page.wait_for_timeout(8000)
-            
+            # Estrategia 1: Esperar a que Cloudflare resuelva el challenge y cargue la tabla de tasas.
+            # Con poca CPU (Render free: 0.1 CPU) el challenge tarda mucho más que en local,
+            # así que una espera fija de pocos segundos devuelve la página "Just a moment..."
+            logger.info("Esperando a que se resuelva el challenge y cargue la tabla de tasas...")
+            start_time = time.time()
+            try:
+                page.wait_for_selector('div.watermark tr', state='attached', timeout=CHALLENGE_TIMEOUT_MS)
+                logger.info(f"Tabla de tasas cargada en {time.time() - start_time:.0f}s")
+            except PlaywrightTimeoutError:
+                logger.warning(f"La tabla de tasas no cargó en {CHALLENGE_TIMEOUT_MS // 1000}s (título: {page.title()!r})")
+
             # Estrategia 2: Scroll para activar scripts
             page.evaluate("window.scrollBy(0, 500)")
             page.wait_for_timeout(2000)
